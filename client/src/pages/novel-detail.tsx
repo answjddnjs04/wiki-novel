@@ -82,7 +82,7 @@ export default function NovelDetail() {
               </span>
               <span className="flex items-center space-x-1" data-testid="text-view-count">
                 <Eye className="h-4 w-4" />
-                <span>조회수 {(novel as any).viewCount || 0}</span>
+                <span>조회수 {novel.viewCount || 0}</span>
               </span>
             </div>
             {novel.description && (

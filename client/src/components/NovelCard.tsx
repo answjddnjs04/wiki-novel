@@ -64,7 +64,7 @@ export default function NovelCard({ novel }: NovelCardProps) {
               </span>
               <span className="flex items-center space-x-1" data-testid="text-view-count">
                 <Eye className="h-4 w-4" />
-                <span>{(novel as any).viewCount || 0}</span>
+                <span>{novel.viewCount || 0}</span>
               </span>
               <span data-testid="text-last-updated">
                 {novel.updatedAt ? formatTimeAgo(novel.updatedAt) : "방금 전"} 업데이트

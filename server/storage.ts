@@ -107,8 +107,26 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Novel operations
-  async getNovels(): Promise<Novel[]> {
-    return await db.select().from(novels).orderBy(desc(novels.updatedAt));
+  async getNovels(): Promise<(Novel & { contributorCount: number; activeContributorCount: number; pendingProposals: number })[]> {
+    const novelList = await db
+      .select({
+        novel: novels,
+        contributorCount: sql<number>`count(distinct ${novelContributions.userId})`.as('contributor_count'),
+        activeContributorCount: sql<number>`count(distinct case when ${novelContributions.createdAt} > now() - interval '30 days' then ${novelContributions.userId} end)`.as('active_contributor_count'),
+        pendingProposals: sql<number>`(select count(*) from ${editProposals} ep where ep.novel_id = ${novels.id} and ep.status = 'pending' and ep.expires_at > now())`.as('pending_proposals')
+      })
+      .from(novels)
+      .leftJoin(novelContributions, eq(novels.id, novelContributions.novelId))
+      .groupBy(novels.id)
+      .orderBy(desc(novels.updatedAt));
+    
+    return novelList.map(item => ({
+      ...item.novel,
+      contributorCount: item.contributorCount || 0,
+      activeContributorCount: item.activeContributorCount || 0,
+      pendingProposals: item.pendingProposals || 0,
+      viewCount: item.novel.viewCount || 0
+    }));
   }
 
   async getNovelsByGenre(genre: string): Promise<(Novel & { contributorCount: number; activeContributorCount: number; pendingProposals: number })[]> {
@@ -129,7 +147,8 @@ export class DatabaseStorage implements IStorage {
       ...item.novel,
       contributorCount: item.contributorCount || 0,
       activeContributorCount: item.activeContributorCount || 0,
-      pendingProposals: item.pendingProposals || 0
+      pendingProposals: item.pendingProposals || 0,
+      viewCount: item.novel.viewCount || 0
     }));
   }
 
@@ -406,32 +425,27 @@ export class DatabaseStorage implements IStorage {
 
   // Contributor ranking operations
   async getContributorsByNovel(novelId: string): Promise<any[]> {
+    // Get contributors with their actual contributions to this specific novel
     const contributors = await db
       .select({
         userId: novelContributions.userId,
         userName: users.firstName,
         userEmail: users.email,
-        totalContribution: sum(novelContributions.charCount).as('total_contribution')
+        totalContribution: sql<number>`sum(${novelContributions.charCount})`
       })
       .from(novelContributions)
       .leftJoin(users, eq(novelContributions.userId, users.id))
       .where(eq(novelContributions.novelId, novelId))
       .groupBy(novelContributions.userId, users.firstName, users.email)
-      .orderBy(desc(sum(novelContributions.charCount)));
+      .orderBy(desc(sql<number>`sum(${novelContributions.charCount})`));
 
-    // Calculate total novel content for percentage
-    const totalResult = await db
-      .select({
-        total: sum(novelContributions.charCount)
-      })
-      .from(novelContributions)
-      .where(eq(novelContributions.novelId, novelId));
-
-    const total = Number(totalResult[0]?.total || 1);
+    // Get the actual novel to calculate percentage based on current content length
+    const novel = await this.getNovel(novelId);
+    const actualNovelLength = novel?.content?.length || 1;
 
     return contributors.map((contributor, index) => {
       const contributionAmount = Number(contributor.totalContribution || 0);
-      const percentage = (contributionAmount / total) * 100;
+      const percentage = Math.min(100, (contributionAmount / actualNovelLength) * 100);
       
       // Determine title based on contribution percentage
       let title = "참여자";
@@ -449,7 +463,7 @@ export class DatabaseStorage implements IStorage {
         userId: contributor.userId,
         userName: contributor.userName || contributor.userEmail || '익명',
         totalContribution: contributionAmount,
-        contributionPercentage: percentage,
+        contributionPercentage: Math.round(percentage * 10) / 10, // Round to 1 decimal place
         title,
         rank: index + 1
       };

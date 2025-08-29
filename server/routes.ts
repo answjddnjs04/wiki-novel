@@ -78,8 +78,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/novels/:id', async (req, res) => {
     try {
       const { id } = req.params;
-      // Increment view count and get novel
-      const novel = await storage.incrementNovelViewCount(id);
+      const novel = await storage.getNovel(id);
       if (!novel) {
         return res.status(404).json({ message: "Novel not found" });
       }
