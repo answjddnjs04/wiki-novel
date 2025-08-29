@@ -117,15 +117,27 @@ export class DatabaseStorage implements IStorage {
       })
       .from(novels)
       .leftJoin(novelContributions, eq(novels.id, novelContributions.novelId))
-      .groupBy(novels.id)
+      .groupBy(
+        novels.id,
+        novels.title,
+        novels.description,
+        novels.genre,
+        novels.content,
+        novels.worldSetting,
+        novels.rules,
+        novels.currentEpisode,
+        novels.episodeThreshold,
+        novels.viewCount,
+        novels.createdAt,
+        novels.updatedAt
+      )
       .orderBy(desc(novels.updatedAt));
     
     return novelList.map(item => ({
       ...item.novel,
       contributorCount: item.contributorCount || 0,
       activeContributorCount: item.activeContributorCount || 0,
-      pendingProposals: item.pendingProposals || 0,
-      viewCount: item.novel.viewCount || 0
+      pendingProposals: item.pendingProposals || 0
     }));
   }
 
@@ -140,15 +152,27 @@ export class DatabaseStorage implements IStorage {
       .from(novels)
       .leftJoin(novelContributions, eq(novels.id, novelContributions.novelId))
       .where(eq(novels.genre, genre))
-      .groupBy(novels.id)
+      .groupBy(
+        novels.id,
+        novels.title,
+        novels.description,
+        novels.genre,
+        novels.content,
+        novels.worldSetting,
+        novels.rules,
+        novels.currentEpisode,
+        novels.episodeThreshold,
+        novels.viewCount,
+        novels.createdAt,
+        novels.updatedAt
+      )
       .orderBy(desc(novels.createdAt));
     
     return novelList.map(item => ({
       ...item.novel,
       contributorCount: item.contributorCount || 0,
       activeContributorCount: item.activeContributorCount || 0,
-      pendingProposals: item.pendingProposals || 0,
-      viewCount: item.novel.viewCount || 0
+      pendingProposals: item.pendingProposals || 0
     }));
   }
 
@@ -425,7 +449,7 @@ export class DatabaseStorage implements IStorage {
 
   // Contributor ranking operations
   async getContributorsByNovel(novelId: string): Promise<any[]> {
-    // Get contributors with their actual contributions to this specific novel
+    // Get contributors with their historical contributions to this specific novel
     const contributors = await db
       .select({
         userId: novelContributions.userId,
@@ -439,31 +463,50 @@ export class DatabaseStorage implements IStorage {
       .groupBy(novelContributions.userId, users.firstName, users.email)
       .orderBy(desc(sql<number>`sum(${novelContributions.charCount})`));
 
-    // Get the actual novel to calculate percentage based on current content length
+    // Get the actual novel to calculate reasonable contribution display
     const novel = await this.getNovel(novelId);
-    const actualNovelLength = novel?.content?.length || 1;
+    const currentNovelLength = novel?.content?.length || 1;
+    
+    // Calculate total of all historical contributions
+    const totalHistoricalContributions = contributors.reduce((sum, contributor) => 
+      sum + Number(contributor.totalContribution || 0), 0
+    );
 
     return contributors.map((contributor, index) => {
-      const contributionAmount = Number(contributor.totalContribution || 0);
-      const percentage = Math.min(100, (contributionAmount / actualNovelLength) * 100);
+      const historicalContribution = Number(contributor.totalContribution || 0);
       
-      // Determine title based on contribution percentage
+      // Calculate percentage based on current novel length
+      // but cap it at reasonable values and show both metrics
+      const currentLengthPercentage = Math.min(100, (historicalContribution / currentNovelLength) * 100);
+      
+      // Also calculate percentage based on total historical contributions
+      const historicalPercentage = totalHistoricalContributions > 0 
+        ? (historicalContribution / totalHistoricalContributions) * 100 
+        : 0;
+      
+      // Show the more reasonable of the two percentages
+      const displayPercentage = Math.min(currentLengthPercentage, historicalPercentage);
+      
+      // Cap contribution display to not exceed current novel length significantly
+      const displayContribution = Math.min(historicalContribution, currentNovelLength * 3);
+      
+      // Determine title based on reasonable percentage
       let title = "참여자";
-      if (percentage >= 40) {
+      if (displayPercentage >= 40) {
         title = "원작자";
-      } else if (percentage >= 20) {
+      } else if (displayPercentage >= 20) {
         title = "공동작가";
-      } else if (percentage >= 10) {
+      } else if (displayPercentage >= 10) {
         title = "주요 기여자";
-      } else if (percentage >= 1) {
+      } else if (displayPercentage >= 1) {
         title = "기여자";
       }
 
       return {
         userId: contributor.userId,
         userName: contributor.userName || contributor.userEmail || '익명',
-        totalContribution: contributionAmount,
-        contributionPercentage: Math.round(percentage * 10) / 10, // Round to 1 decimal place
+        totalContribution: displayContribution, // Use capped value for display
+        contributionPercentage: Math.round(displayPercentage * 10) / 10,
         title,
         rank: index + 1
       };
